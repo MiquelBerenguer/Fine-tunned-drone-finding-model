@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+.mplconfig/
+.DS_Store
+
+# Large local model weights
+yolov8s-world.pt
+*.pt
+
+# Generated media outputs
+*.mp4
+*.png
+*.jpg
+*.jpeg
+
+# Notebook and tool caches
+.ipynb_checkpoints/
