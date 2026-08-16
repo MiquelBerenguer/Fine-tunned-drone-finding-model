@@ -50,7 +50,9 @@ def process_video(
     """
     if not input_path:
         return None, "Upload a video first."
-    if not query.strip():
+    # Zero-shot needs a text query; the fine-tuned model receives a (possibly
+    # empty) list of selected classes, so only enforce text when it's a string.
+    if isinstance(query, str) and not query.strip():
         return None, "Type what to look for (e.g. 'person', 'car')."
 
     sample_rate = max(1, int(sample_rate))

@@ -29,11 +29,29 @@ import video as video_pipeline
 # while wiring/troubleshooting.
 MODEL_OPTIONS = [
     "YOLO-World (zero-shot)",
+    "Fine-tuned (best.onnx)",
     "stub (fake data, for testing)",
 ]
 
+# Class names the fine-tuned model was trained on. Loaded once at startup so
+# the dropdown always offers words the model actually recognises.
+FINE_TUNED_CLASSES = detector.get_fine_tuned_class_names()
 
-def run_pipeline(image, query, confidence, model_choice):
+
+def _is_fine_tuned(model_choice):
+    return "fine-tuned" in (model_choice or "").lower()
+
+
+def _toggle_query_inputs(model_choice):
+    """Show the free-text box for zero-shot, the class dropdown for fine-tuned."""
+    fine_tuned = _is_fine_tuned(model_choice)
+    return (
+        gr.update(visible=not fine_tuned),  # free-text query box
+        gr.update(visible=fine_tuned),      # fine-tuned class dropdown
+    )
+
+
+def run_pipeline(image, query, class_filter, confidence, model_choice):
     """
     This function is called every time the user presses the "Find objects"
     button. It wires all the pieces together:
@@ -45,27 +63,43 @@ def run_pipeline(image, query, confidence, model_choice):
     if image is None:
         return None, "Upload an image first."
 
-    if not query.strip():
+    fine_tuned = _is_fine_tuned(model_choice)
+
+    if not fine_tuned and not query.strip():
         return None, "Type what to look for (e.g. 'person', 'car')."
+
+    # Fine-tuned model filters by the classes picked in the dropdown; the
+    # zero-shot / stub models use the free-text query.
+    detect_query = class_filter if fine_tuned else query
 
     # Gradio gives a PIL image when `type="pil"`. `render.draw()` expects an
     # HxWx3 NumPy RGB array.
     image_rgb = image.convert("RGB")
     image_np = np.array(image_rgb)
 
-    detections = detector.detect(image_rgb, query=query, confidence=confidence, model_choice=model_choice)
+    detections = detector.detect(image_rgb, query=detect_query, confidence=confidence, model_choice=model_choice)
     result_image = render.draw(image_np, detections, conf_threshold=confidence)
 
 
-    status = f"Found {len(detections)} objects matching '{query}'."
+    if fine_tuned:
+        if class_filter:
+            status = f"Found {len(detections)} objects matching {', '.join(class_filter)}."
+        else:
+            status = f"Found {len(detections)} objects across all trained classes."
+    else:
+        status = f"Found {len(detections)} objects matching '{query}'."
     return result_image, status
 
 
-def run_video_pipeline(video_file, query, confidence, model_choice, sample_rate):
+def run_video_pipeline(video_file, query, class_filter, confidence, model_choice, sample_rate):
     """Video path: upload -> detect/render -> annotated mp4."""
+    fine_tuned = _is_fine_tuned(model_choice)
+    if not fine_tuned and not query.strip():
+        return None, "Type what to look for (e.g. 'person', 'car')."
+    detect_query = class_filter if fine_tuned else query
     return video_pipeline.process_video(
         input_path=video_file,
-        query=query,
+        query=detect_query,
         confidence=confidence,
         model_choice=model_choice,
         sample_rate=sample_rate,
@@ -87,7 +121,15 @@ with gr.Blocks(title="DroneFind") as demo:
                     image_input = gr.Image(type="pil", label="Image")
                     query_input = gr.Textbox(
                         label="What to look for",
-                        placeholder="e.g. person, car, bicycle",
+                        placeholder="e.g. 'person', 'car'",
+                        visible=True,
+                    )
+                    class_input = gr.Dropdown(
+                        choices=FINE_TUNED_CLASSES,
+                        value=[],
+                        multiselect=True,
+                        label="Classes to keep (leave empty for all)",
+                        visible=False,
                     )
                     confidence_input = gr.Slider(
                         minimum=0.0, maximum=1.0, value=0.3, step=0.05,
@@ -102,9 +144,15 @@ with gr.Blocks(title="DroneFind") as demo:
                     image_output = gr.Image(label="Result")
                     status_output = gr.Textbox(label="Status", interactive=False)
 
+            model_input.change(
+                fn=_toggle_query_inputs,
+                inputs=model_input,
+                outputs=[query_input, class_input],
+            )
+
             submit_button.click(
                 fn=run_pipeline,
-                inputs=[image_input, query_input, confidence_input, model_input],
+                inputs=[image_input, query_input, class_input, confidence_input, model_input],
                 outputs=[image_output, status_output],
             )
 
@@ -114,7 +162,15 @@ with gr.Blocks(title="DroneFind") as demo:
                     video_input = gr.Video(label="Input video")
                     video_query_input = gr.Textbox(
                         label="What to look for",
-                        placeholder="e.g. person, car, bicycle",
+                        placeholder="e.g. 'person', 'car'",
+                        visible=True,
+                    )
+                    video_class_input = gr.Dropdown(
+                        choices=FINE_TUNED_CLASSES,
+                        value=[],
+                        multiselect=True,
+                        label="Classes to keep (leave empty for all)",
+                        visible=False,
                     )
                     video_confidence_input = gr.Slider(
                         minimum=0.0, maximum=1.0, value=0.3, step=0.05,
@@ -136,11 +192,18 @@ with gr.Blocks(title="DroneFind") as demo:
                     video_output = gr.Video(label="Annotated video")
                     video_status_output = gr.Textbox(label="Status", interactive=False)
 
+            video_model_input.change(
+                fn=_toggle_query_inputs,
+                inputs=video_model_input,
+                outputs=[video_query_input, video_class_input],
+            )
+
             video_submit_button.click(
                 fn=run_video_pipeline,
                 inputs=[
                     video_input,
                     video_query_input,
+                    video_class_input,
                     video_confidence_input,
                     video_model_input,
                     sample_rate_input,
